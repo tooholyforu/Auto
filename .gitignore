@@ -1,0 +1,7 @@
+# Исходные данные и результаты содержат персональные данные, в репозиторий не попадают
+data/
+out/
+config/employee_aliases.csv
+*.xlsx
+*.sqlite
+__pycache__/
