@@ -1,0 +1,8 @@
+employee_id;name;position;email;jira_login;hire_date;fire_date
+000001;Иванов Иван Иванович;Генеральный директор;ivanov@example.com;;2025-08-22;
+000002;Петрова Анна Сергеевна;Главный бухгалтер;petrova@example.com;;2025-09-01;
+000003;Сидоров Сергей Петрович;Разработчик;sidorov@example.com;ssidorov;2025-10-01;
+000004;Кузнецова Мария Олеговна;Аналитик;kuznetsova@example.com;mkuznetsova;2026-01-12;
+000005;Орлов Олег Игоревич;Тестировщик;orlov@example.com;oorlov;2026-09-14;
+000006;Смирнов Павел Андреевич;Разработчик;smirnov@example.com;psmirnov;2024-03-01;2026-08-31
+000007;Волкова Елена Викторовна;Дизайнер;volkova@example.com;evolkova;2025-11-05;

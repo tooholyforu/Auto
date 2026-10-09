@@ -174,7 +174,7 @@ def parse_title(value) -> tuple[int | None, int, bool] | None:
 # Справочники (необязательные файлы настроек)
 # --------------------------------------------------------------------------
 
-def _read_csv(path: Path, required: set[str]) -> list[dict]:
+def read_csv(path: Path, required: set[str]) -> list[dict]:
     with open(path, encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f, delimiter=DELIM)
         missing = required - set(reader.fieldnames or [])
@@ -186,7 +186,7 @@ def _read_csv(path: Path, required: set[str]) -> list[dict]:
 def load_aliases(path: Path) -> dict[str, str]:
     """Файл с колонками alias;canonical: разные написания одного ФИО."""
     return {key(r["alias"]): clean(r["canonical"])
-            for r in _read_csv(path, {"alias", "canonical"})}
+            for r in read_csv(path, {"alias", "canonical"})}
 
 
 def load_project_map(path: Path) -> dict[str, list[tuple[str, float]]]:
@@ -197,7 +197,7 @@ def load_project_map(path: Path) -> dict[str, list[tuple[str, float]]]:
     (когда проекты объединили или переименовали).
     """
     mapping: dict[str, list[tuple[str, float]]] = {}
-    for r in _read_csv(path, {"raw_name", "project"}):
+    for r in read_csv(path, {"raw_name", "project"}):
         weight = clean(r.get("weight") or "1").replace(",", ".")
         try:
             mapping.setdefault(key(r["raw_name"]), []).append((clean(r["project"]), float(weight)))
@@ -472,45 +472,67 @@ def _num(value: float) -> str:
 
 
 SCHEMA = """
-CREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
-CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
-CREATE TABLE employee_months (
+CREATE TABLE IF NOT EXISTS employees (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    external_id TEXT);
+CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+CREATE TABLE IF NOT EXISTS employee_months (
     month TEXT NOT NULL,
     employee_id INTEGER NOT NULL REFERENCES employees(id),
     position TEXT, hire_date TEXT, tag TEXT,
     total_share REAL NOT NULL,
     is_forecast INTEGER NOT NULL,
+    source TEXT NOT NULL,
     source_row INTEGER NOT NULL,
     PRIMARY KEY (month, employee_id));
-CREATE TABLE allocations (
+CREATE TABLE IF NOT EXISTS allocations (
     month TEXT NOT NULL,
     employee_id INTEGER NOT NULL,
     project_id INTEGER NOT NULL REFERENCES projects(id),
     share REAL NOT NULL,
-    source_row INTEGER NOT NULL,
+    hours REAL,
     PRIMARY KEY (month, employee_id, project_id),
     FOREIGN KEY (month, employee_id) REFERENCES employee_months(month, employee_id));
 """
 
 
-def write_sqlite(res: Result, path: Path) -> None:
-    path.unlink(missing_ok=True)
-    employees = {n: i for i, n in enumerate(dict.fromkeys(r["employee"] for r in res.employee_months), 1)}
-    projects = {n: i for i, n in enumerate(dict.fromkeys(r["project"] for r in res.allocations), 1)}
+def save_to_db(res: Result, path: Path) -> None:
+    """Записывает месяцы из res в базу. Данные тех же месяцев заменяются, остальные не трогаются."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     with contextlib.closing(sqlite3.connect(path)) as db:
         db.executescript(SCHEMA)
-        db.executemany("INSERT INTO employees VALUES (?, ?)", [(i, n) for n, i in employees.items()])
-        db.executemany("INSERT INTO projects VALUES (?, ?)", [(i, n) for n, i in projects.items()])
-        db.executemany(
-            "INSERT INTO employee_months VALUES (?,?,?,?,?,?,?,?)",
-            [(r["month"], employees[r["employee"]], r["position"], r["hire_date"] or None,
-              r["tag"] or None, r["total_share"], r["is_forecast"], r["source_row"])
-             for r in res.employee_months])
-        db.executemany(
-            "INSERT INTO allocations VALUES (?,?,?,?,?)",
-            [(r["month"], employees[r["employee"]], projects[r["project"]], r["share"], r["source_row"])
-             for r in res.allocations])
+        for month in res.months:
+            db.execute("DELETE FROM allocations WHERE month = ?", (month,))
+            db.execute("DELETE FROM employee_months WHERE month = ?", (month,))
+
+        def ref(table: str, name: str, **extra) -> int:
+            db.execute(f"INSERT OR IGNORE INTO {table} (name) VALUES (?)", (name,))
+            row_id = db.execute(f"SELECT id FROM {table} WHERE name = ?", (name,)).fetchone()[0]
+            for column, value in extra.items():
+                if value:
+                    db.execute(f"UPDATE {table} SET {column} = ? WHERE id = ? AND {column} IS NULL", (value, row_id))
+            return row_id
+
+        employees = {}
+        for r in res.employee_months:
+            employees[r["employee"]] = ref("employees", r["employee"], external_id=r.get("external_id"))
+            db.execute(
+                "INSERT INTO employee_months (month, employee_id, position, hire_date, tag, total_share,"
+                " is_forecast, source, source_row) VALUES (?,?,?,?,?,?,?,?,?)",
+                (r["month"], employees[r["employee"]], r["position"], r["hire_date"] or None,
+                 r["tag"] or None, r["total_share"], r["is_forecast"], r.get("source", "excel"), r["source_row"]))
+        for r in res.allocations:
+            db.execute(
+                "INSERT INTO allocations (month, employee_id, project_id, share, hours) VALUES (?,?,?,?,?)",
+                (r["month"], employees[r["employee"]], ref("projects", r["project"]), r["share"], r.get("hours")))
         db.commit()
+
+
+def write_sqlite(res: Result, path: Path) -> None:
+    """Пересоздает базу с нуля (для разового импорта из Excel)."""
+    path.unlink(missing_ok=True)
+    save_to_db(res, path)
 
 
 def write_report(res: Result, path: Path) -> None:
@@ -550,7 +572,9 @@ def write_report(res: Result, path: Path) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def write_outputs(res: Result, out: Path) -> None:
+def write_outputs(res: Result, out: Path, db: Path | None = None) -> None:
+    """Пишет CSV и отчет в out. База: по умолчанию out/allocation.sqlite пересоздается,
+    а явно заданная db обновляется по месяцам, не стирая остальные."""
     out.mkdir(parents=True, exist_ok=True)
     _write_csv(out / "allocations.csv",
                ["month", "employee", "project", "share", "is_forecast", "source_row"],
@@ -564,7 +588,10 @@ def write_outputs(res: Result, out: Path) -> None:
                [[raw, raw, "1"] for raw in sorted(res.raw_projects, key=lambda p: min(res.raw_projects[p]))])
     _write_csv(out / "employee_aliases.suggested.csv", ["alias", "canonical"],
                [[a, b] for a, b, _ in suggest_aliases(list(res.names.values()))])
-    write_sqlite(res, out / "allocation.sqlite")
+    if db is None:
+        write_sqlite(res, out / "allocation.sqlite")
+    else:
+        save_to_db(res, db)
     write_report(res, out / "report.md")
 
 

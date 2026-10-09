@@ -1,0 +1,7 @@
+raw_name;project;weight
+DBO;ДБО/PWA;1
+ABB;ABBID;1
+FACT;Факторинг;1
+GAR;Гарантии;1
+SHARED;ДБО/PWA;0,5
+SHARED;Гарантии;0,5
