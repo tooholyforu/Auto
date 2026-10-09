@@ -18,7 +18,9 @@ from pathlib import Path
 
 from allocation_calc import DEFAULT_MIN_HOURS, build_month, load_overrides, load_roster, month_bounds
 from allocation_import import ERROR, WARNING, load_project_map, write_outputs
-from jira_client import JiraClient, JiraError, build_session, load_worklogs_csv, save_worklogs_csv
+import requests
+
+from jira_client import JiraClient, JiraError, build_session, explain, load_worklogs_csv, save_worklogs_csv
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -55,8 +57,8 @@ def main(argv: list[str] | None = None) -> int:
             session = build_session(os.environ.get("JIRA_TOKEN"), os.environ.get("JIRA_USER"),
                                     os.environ.get("JIRA_PASSWORD"), os.environ.get("JIRA_CA_BUNDLE"))
             worklogs = JiraClient(url, session).worklogs(start, end)
-        except JiraError as exc:
-            raise SystemExit(str(exc)) from None
+        except (JiraError, requests.RequestException) as exc:
+            raise SystemExit(explain(exc)) from None
         if args.save_worklogs:
             save_worklogs_csv(worklogs, args.save_worklogs)
 

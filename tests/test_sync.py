@@ -228,3 +228,45 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CheckTests(unittest.TestCase):
+    def setUp(self):
+        import check_jira
+        self.check = check_jira
+
+    def client(self, issues, status=200):
+        fake = FakeJira(issues, status=status)
+        original = fake.get
+
+        def get(url, params=None, timeout=None):
+            if url.endswith("/myself"):
+                return FakeResponse({"name": "me"}, status)
+            if url.endswith("/project"):
+                return FakeResponse([{"key": "A"}, {"key": "B"}], status)
+            return original(url, params, timeout)
+
+        fake.get = get
+        return jc.JiraClient("https://j", fake)
+
+    def test_report_has_counts_but_no_logins_by_default(self):
+        client = self.client([issue("A-1", [entry(1, "ssidorov", 3, 8), entry(2, "stranger", 4, 4)])])
+        roster = [emp(1, "Сидоров", "ssidorov")]
+        text = "\n".join(self.check.run_check(client, "2026-09", roster))
+        self.assertIn("списаний за 2026-09: 2, часов 12, авторов 2", text)
+        self.assertIn("найдено в списке сотрудников: 1 из 2", text)
+        self.assertNotIn("stranger", text)
+        self.assertIn("stranger", "\n".join(self.check.run_check(client, "2026-09", roster, verbose=True)))
+
+    def test_no_worklogs_is_flagged(self):
+        text = "\n".join(self.check.run_check(self.client([]), "2026-09"))
+        self.assertIn("списаний за 2026-09 не найдено", text)
+
+    def test_previous_month(self):
+        self.assertEqual(self.check.previous_month(date(2026, 10, 9)), "2026-09")
+        self.assertEqual(self.check.previous_month(date(2026, 1, 5)), "2025-12")
+
+    def test_network_errors_are_explained(self):
+        import requests
+        self.assertIn("VPN", jc.explain(requests.exceptions.ConnectionError()))
+        self.assertIn("JIRA_CA_BUNDLE", jc.explain(requests.exceptions.SSLError()))

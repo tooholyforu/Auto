@@ -35,6 +35,17 @@ class Worklog:
     seconds: int
 
 
+def explain(exc: Exception) -> str:
+    """Понятное сообщение вместо длинного текста исключения при сбоях сети."""
+    if isinstance(exc, JiraError):
+        return str(exc)
+    if isinstance(exc, requests.exceptions.SSLError):
+        return "ошибка проверки сертификата: укажите файл сертификата вашего центра в JIRA_CA_BUNDLE"
+    if isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
+        return "сервер Jira недоступен: проверьте, что включен VPN, и адрес в JIRA_URL"
+    return f"запрос к Jira не удался: {exc}"
+
+
 def build_session(token: str | None = None, user: str | None = None, password: str | None = None,
                   ca_bundle: str | None = None) -> requests.Session:
     """Сессия с повторами при 429/5xx. Проверка сертификата не отключается: для внутреннего
@@ -69,6 +80,12 @@ class JiraClient:
                             "на просмотр проектов и списаний времени")
         response.raise_for_status()
         return response.json()
+
+    def myself(self) -> dict:
+        return self._get("/rest/api/2/myself")
+
+    def projects(self) -> list[dict]:
+        return self._get("/rest/api/2/project")
 
     def worklogs(self, start: date, end: date) -> list[Worklog]:
         """Списания с датой начала от start включительно до end не включая."""
