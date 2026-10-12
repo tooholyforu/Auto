@@ -165,6 +165,26 @@ def save_worklogs_csv(worklogs: list[Worklog], path: Path) -> None:
                              w.started.isoformat(), w.seconds])
 
 
+ASSIGNMENT_FIELDS = ["issue_key", "project_key", "login", "user_key", "email"]
+
+
+def save_assignments_csv(items: list[Assignment], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.writer(f, delimiter=DELIM)
+        writer.writerow(ASSIGNMENT_FIELDS)
+        writer.writerows([a.issue_key, a.project_key, a.login, a.user_key, a.email] for a in items)
+
+
+def load_assignments_csv(path: Path) -> list[Assignment]:
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.DictReader(f, delimiter=DELIM))
+    missing = set(ASSIGNMENT_FIELDS) - set(rows[0] if rows else ASSIGNMENT_FIELDS)
+    if missing:
+        raise SystemExit(f"{path}: нет столбцов {', '.join(sorted(missing))}")
+    return [Assignment(r["issue_key"], r["project_key"], r["login"], r["user_key"], r["email"]) for r in rows]
+
+
 def load_worklogs_csv(path: Path, start: date, end: date) -> list[Worklog]:
     with open(path, encoding="utf-8-sig", newline="") as f:
         rows = list(csv.DictReader(f, delimiter=DELIM))

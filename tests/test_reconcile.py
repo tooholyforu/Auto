@@ -77,6 +77,59 @@ class AssignmentsTests(unittest.TestCase):
         self.assertIn("assignee is not EMPTY", fake.calls[0][1]["jql"])
 
 
+class OnlineCliTests(unittest.TestCase):
+    """Проверяет, что по умолчанию запрашиваются только задачи, а списания только по флагу."""
+
+    def run_main(self, extra):
+        from unittest import mock
+        calls = []
+
+        class StubClient:
+            def __init__(self, *a, **k):
+                pass
+
+            def assignments(self, start, end):
+                calls.append("assignments")
+                return [assigned("ssidorov", "DBO")]
+
+            def worklogs(self, start, end):
+                calls.append("worklogs")
+                return []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            res = ai.Result(months=["2026-09"])
+            res.employee_months.append({"month": "2026-09", "employee": "Сидоров Сергей", "external_id": "3", "position": "",
+                                        "hire_date": "", "tag": "", "total_share": 1.0, "is_forecast": 0, "source": "excel",
+                                        "source_row": 5})
+            res.allocations.append({"month": "2026-09", "employee": "Сидоров Сергей", "project": "ДБО/PWA", "share": 1.0,
+                                    "is_forecast": 0, "source_row": 5})
+            ai.save_to_db(res, tmp / "a.sqlite")
+            (tmp / "e.csv").write_text("employee_id;name;jira_login\n3;Сидоров Сергей;ssidorov\n", encoding="utf-8-sig")
+            (tmp / "m.csv").write_text("raw_name;project;weight\nDBO;ДБО/PWA;1\n", encoding="utf-8-sig")
+            argv = ["--month", "2026-09", "--db", str(tmp / "a.sqlite"), "--roster", str(tmp / "e.csv"),
+                    "--project-map", str(tmp / "m.csv"), "--out", str(tmp / "o"),
+                    "--save-assignments", str(tmp / "t.csv")] + extra
+            env = {"JIRA_URL": "https://j", "JIRA_TOKEN": "t"}
+            with mock.patch.object(rec, "JiraClient", StubClient), mock.patch.dict(rec.os.environ, env):
+                self.assertEqual(rec.main(argv), 0)
+            saved = jc.load_assignments_csv(tmp / "t.csv")
+            report = (tmp / "o" / "report-2026-09.md").read_text(encoding="utf-8")
+        return calls, saved, report
+
+    def test_default_uses_tasks_only(self):
+        calls, saved, report = self.run_main([])
+        self.assertEqual(calls, ["assignments"])
+        self.assertEqual([(a.project_key, a.login) for a in saved], [("DBO", "ssidorov")])
+        self.assertNotIn("списания", report)
+        self.assertIn("на ручной разбор: 0", report)
+
+    def test_worklogs_only_with_flag(self):
+        calls, _, report = self.run_main(["--with-worklogs"])
+        self.assertEqual(calls, ["assignments", "worklogs"])
+        self.assertIn("списания времени", report)
+
+
 class CliTests(unittest.TestCase):
     def test_offline_run_writes_review_csv(self):
         with tempfile.TemporaryDirectory() as tmp:

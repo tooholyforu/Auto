@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Проверяет доступ к Jira и наличие списаний времени. Запускать на машине с доступом к серверу (VPN).
+"""Проверяет доступ к Jira и наличие задач с исполнителями. Запускать на машине с доступом к серверу (VPN).
 
 Ничего не записывает. По умолчанию печатает только количества, без имен и логинов,
 поэтому вывод можно показывать другим. Доступ берется из переменных окружения:
@@ -37,23 +37,24 @@ def run_check(client: JiraClient, month: str, roster=None, verbose: bool = False
         lines.append("     ключи: " + ", ".join(sorted(p["key"] for p in projects)))
 
     start, end = month_bounds(month)
+    tasks = client.assignments(start, end)
+    if not tasks:
+        lines.append(f"[!] задач с исполнителем, обновленных за {month}, не найдено: проверьте права на проекты")
+    else:
+        people = {key(t.login or t.user_key or t.email) for t in tasks}
+        lines.append(f"[ok] задач с исполнителем, обновленных за {month}: {len(tasks)}, исполнителей {len(people)}, "
+                     f"проектов {len({t.project_key for t in tasks})}")
+        if roster:
+            logins = {key(e.jira_login) for e in roster if e.jira_login}
+            emails = {key(e.email) for e in roster if e.email}
+            matched = {key(t.login or t.user_key or t.email) for t in tasks
+                       if key(t.login) in logins or key(t.user_key) in logins or key(t.email) in emails}
+            lines.append(f"[{'ok' if matched == people else '!'}] исполнителей найдено в списке сотрудников: "
+                         f"{len(matched)} из {len(people)}")
+            if verbose and matched != people:
+                lines.append("     не найдены: " + ", ".join(sorted(people - matched)))
     logs = client.worklogs(start, end)
-    if not logs:
-        lines.append(f"[!] списаний за {month} не найдено: время не списывают или нет прав на просмотр")
-        return lines
-    authors = {key(w.login or w.user_key or w.email) for w in logs}
-    hours = sum(w.seconds for w in logs) / 3600
-    lines.append(f"[ok] списаний за {month}: {len(logs)}, часов {hours:.0f}, авторов {len(authors)}, "
-                 f"проектов с часами {len({w.project_key for w in logs})}")
-    if roster:
-        logins = {key(e.jira_login) for e in roster if e.jira_login}
-        emails = {key(e.email) for e in roster if e.email}
-        matched = {key(w.login or w.user_key or w.email) for w in logs
-                   if key(w.login) in logins or key(w.user_key) in logins or key(w.email) in emails}
-        lines.append(f"[{'ok' if matched == authors else '!'}] авторов найдено в списке сотрудников: "
-                     f"{len(matched)} из {len(authors)}")
-        if verbose and matched != authors:
-            lines.append("     не найдены: " + ", ".join(sorted(authors - matched)))
+    lines.append(f"[i] списаний времени за {month}: {len(logs)} (для сверки не нужны, время в Jira не ведут)")
     return lines
 
 

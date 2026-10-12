@@ -250,17 +250,21 @@ class CheckTests(unittest.TestCase):
         return jc.JiraClient("https://j", fake)
 
     def test_report_has_counts_but_no_logins_by_default(self):
-        client = self.client([issue("A-1", [entry(1, "ssidorov", 3, 8), entry(2, "stranger", 4, 4)])])
+        def task(key_, login):
+            return {"key": key_, "fields": {"project": {"key": key_.split("-")[0]}, "assignee": {"name": login},
+                                            "worklog": {"worklogs": [], "total": 0}}}
+        client = self.client([task("A-1", "ssidorov"), task("B-2", "stranger")])
         roster = [emp(1, "Сидоров", "ssidorov")]
         text = "\n".join(self.check.run_check(client, "2026-09", roster))
-        self.assertIn("списаний за 2026-09: 2, часов 12, авторов 2", text)
+        self.assertIn("обновленных за 2026-09: 2, исполнителей 2, проектов 2", text)
         self.assertIn("найдено в списке сотрудников: 1 из 2", text)
+        self.assertIn("списаний времени за 2026-09: 0", text)
         self.assertNotIn("stranger", text)
         self.assertIn("stranger", "\n".join(self.check.run_check(client, "2026-09", roster, verbose=True)))
 
-    def test_no_worklogs_is_flagged(self):
+    def test_no_tasks_is_flagged(self):
         text = "\n".join(self.check.run_check(self.client([]), "2026-09"))
-        self.assertIn("списаний за 2026-09 не найдено", text)
+        self.assertIn("задач с исполнителем, обновленных за 2026-09, не найдено", text)
 
     def test_previous_month(self):
         self.assertEqual(self.check.previous_month(date(2026, 10, 9)), "2026-09")

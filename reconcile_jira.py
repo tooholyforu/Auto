@@ -2,8 +2,9 @@
 """Сверяет заявленную аллокацию с активностью в Jira и выдает случаи для ручного разбора.
 
 Правило: если в аллокации у человека за месяц указан проект (например 10%), а в Jira у него
-по этому проекту нет ни списаний времени, ни задач (где он исполнитель и которые обновлялись
-в этом месяце), случай попадает в список на ручной разбор. Ничего не исправляется само.
+по этому проекту нет задач (где он исполнитель и которые обновлялись в этом месяце), случай
+попадает в список на ручной разбор. Ничего не исправляется само. Списания времени в Jira не
+ведутся, поэтому по умолчанию они не используются (флаг --with-worklogs).
 
 Аллокация берется из базы (allocation_import.py или sync_jira.py), сотрудники из списка 1С,
 связь проектов с Jira из config/jira_project_map.csv (raw_name это ключ проекта Jira).
@@ -26,7 +27,7 @@ import requests
 from allocation_calc import Employee, load_roster, month_bounds
 from allocation_import import key, load_project_map, num, write_csv
 from jira_client import (Assignment, JiraClient, JiraError, Worklog, build_session, explain,
-                         load_worklogs_csv)
+                         load_assignments_csv, load_worklogs_csv, save_assignments_csv)
 
 CSV_HEADER = ["month", "employee", "project", "share", "jira_projects", "reason", "other_activity", "decision"]
 
@@ -158,8 +159,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--roster", type=Path, default=Path("config/employees.csv"), help="сотрудники из 1С")
     p.add_argument("--project-map", type=Path, default=Path("config/jira_project_map.csv"),
                    help="соответствие проектов Jira проектам аллокации")
-    p.add_argument("--worklogs-csv", type=Path,
-                   help="взять списания из файла вместо Jira (тогда задачи исполнителей не учитываются)")
+    p.add_argument("--assignments-csv", type=Path, help="взять задачи из файла вместо Jira")
+    p.add_argument("--save-assignments", type=Path, help="сохранить полученные из Jira задачи в CSV")
+    p.add_argument("--with-worklogs", action="store_true", help="учитывать и списания времени (если их ведут)")
+    p.add_argument("--worklogs-csv", type=Path, help="взять списания из файла вместо Jira")
     p.add_argument("--min-share", type=float, default=0.0, help="не проверять доли меньше этой (например 0.05)")
     p.add_argument("--out", type=Path, default=Path("out/reconcile"), help="папка для результатов")
     args = p.parse_args(argv)
@@ -174,9 +177,10 @@ def main(argv: list[str] | None = None) -> int:
     if not allocations:
         raise SystemExit(f"в базе {args.db} нет аллокации за {args.month}")
 
-    if args.worklogs_csv:
-        worklogs, assignments = load_worklogs_csv(args.worklogs_csv, start, end), []
-        note = "списания времени (задачи исполнителей не загружались)"
+    offline = args.assignments_csv or args.worklogs_csv
+    if offline:
+        assignments = load_assignments_csv(args.assignments_csv) if args.assignments_csv else []
+        worklogs = load_worklogs_csv(args.worklogs_csv, start, end) if args.worklogs_csv else []
     else:
         url = os.environ.get("JIRA_URL")
         if not url:
@@ -185,10 +189,15 @@ def main(argv: list[str] | None = None) -> int:
             session = build_session(os.environ.get("JIRA_TOKEN"), os.environ.get("JIRA_USER"),
                                     os.environ.get("JIRA_PASSWORD"), os.environ.get("JIRA_CA_BUNDLE"))
             client = JiraClient(url, session)
-            worklogs, assignments = client.worklogs(start, end), client.assignments(start, end)
+            assignments = client.assignments(start, end)
+            worklogs = client.worklogs(start, end) if args.with_worklogs else []
         except (JiraError, requests.RequestException) as exc:
             raise SystemExit(explain(exc)) from None
-        note = "списания времени или задачи, где человек исполнитель и которые менялись в этом месяце"
+        if args.save_assignments:
+            save_assignments_csv(assignments, args.save_assignments)
+    note = "задачи, где человек исполнитель и которые обновлялись в этом месяце"
+    if args.with_worklogs or args.worklogs_csv:
+        note += ", и списания времени"
 
     outcome = reconcile(args.month, allocations, roster, worklogs, assignments, project_map, args.min_share)
     write_review(outcome, args.out, note)
