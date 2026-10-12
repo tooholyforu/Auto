@@ -25,7 +25,7 @@ from pathlib import Path
 import requests
 
 from allocation_calc import Employee, load_roster, month_bounds
-from allocation_import import key, load_project_map, num, write_csv
+from allocation_import import check_schema, key, load_project_map, num, write_csv
 from jira_client import (Assignment, JiraClient, JiraError, Worklog, build_session, explain,
                          load_assignments_csv, load_worklogs_csv, save_assignments_csv)
 
@@ -117,6 +117,7 @@ def reconcile(month: str, allocations: list[dict], roster: list[Employee], workl
 
 def read_allocations(db_path: Path, month: str) -> list[dict]:
     with contextlib.closing(sqlite3.connect(db_path)) as db:
+        check_schema(db, db_path)
         rows = db.execute(
             "SELECT e.name, e.external_id, p.name, a.share FROM allocations a "
             "JOIN employees e ON e.id = a.employee_id JOIN projects p ON p.id = a.project_id "

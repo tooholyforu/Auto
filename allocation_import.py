@@ -497,10 +497,19 @@ CREATE TABLE IF NOT EXISTS allocations (
 """
 
 
+def check_schema(db: sqlite3.Connection, path: Path) -> None:
+    """База, созданная прежней версией скрипта, не содержит новых столбцов."""
+    columns = {r[1] for r in db.execute("PRAGMA table_info(employees)")}
+    if columns and "external_id" not in columns:
+        raise SystemExit(f"{path}: база создана прежней версией скриптов. Пересоздайте ее: "
+                         "запустите allocation_import.py с исходным Excel еще раз")
+
+
 def save_to_db(res: Result, path: Path) -> None:
     """Записывает месяцы из res в базу. Данные тех же месяцев заменяются, остальные не трогаются."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with contextlib.closing(sqlite3.connect(path)) as db:
+        check_schema(db, path)
         db.executescript(SCHEMA)
         for month in res.months:
             db.execute("DELETE FROM allocations WHERE month = ?", (month,))
