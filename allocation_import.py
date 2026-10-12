@@ -460,14 +460,14 @@ def _suggest(res: Result) -> None:
 # Вывод результатов
 # --------------------------------------------------------------------------
 
-def _write_csv(path: Path, header: list[str], rows: list[list]) -> None:
+def write_csv(path: Path, header: list[str], rows: list[list]) -> None:
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f, delimiter=DELIM)
         writer.writerow(header)
         writer.writerows(rows)
 
 
-def _num(value: float) -> str:
+def num(value: float) -> str:
     return f"{value:g}".replace(".", ",")
 
 
@@ -576,17 +576,17 @@ def write_outputs(res: Result, out: Path, db: Path | None = None) -> None:
     """Пишет CSV и отчет в out. База: по умолчанию out/allocation.sqlite пересоздается,
     а явно заданная db обновляется по месяцам, не стирая остальные."""
     out.mkdir(parents=True, exist_ok=True)
-    _write_csv(out / "allocations.csv",
+    write_csv(out / "allocations.csv",
                ["month", "employee", "project", "share", "is_forecast", "source_row"],
-               [[r["month"], r["employee"], r["project"], _num(r["share"]), r["is_forecast"], r["source_row"]]
+               [[r["month"], r["employee"], r["project"], num(r["share"]), r["is_forecast"], r["source_row"]]
                 for r in res.allocations])
-    _write_csv(out / "employee_months.csv",
+    write_csv(out / "employee_months.csv",
                ["month", "employee", "position", "hire_date", "tag", "total_share", "is_forecast", "source_row"],
                [[r["month"], r["employee"], r["position"], r["hire_date"], r["tag"],
-                 _num(r["total_share"]), r["is_forecast"], r["source_row"]] for r in res.employee_months])
-    _write_csv(out / "project_map.suggested.csv", ["raw_name", "project", "weight"],
+                 num(r["total_share"]), r["is_forecast"], r["source_row"]] for r in res.employee_months])
+    write_csv(out / "project_map.suggested.csv", ["raw_name", "project", "weight"],
                [[raw, raw, "1"] for raw in sorted(res.raw_projects, key=lambda p: min(res.raw_projects[p]))])
-    _write_csv(out / "employee_aliases.suggested.csv", ["alias", "canonical"],
+    write_csv(out / "employee_aliases.suggested.csv", ["alias", "canonical"],
                [[a, b] for a, b, _ in suggest_aliases(list(res.names.values()))])
     if db is None:
         write_sqlite(res, out / "allocation.sqlite")

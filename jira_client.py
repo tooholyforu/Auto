@@ -35,6 +35,15 @@ class Worklog:
     seconds: int
 
 
+@dataclass(frozen=True)
+class Assignment:
+    issue_key: str
+    project_key: str
+    login: str
+    user_key: str
+    email: str
+
+
 def explain(exc: Exception) -> str:
     """Понятное сообщение вместо длинного текста исключения при сбоях сети."""
     if isinstance(exc, JiraError):
@@ -91,18 +100,33 @@ class JiraClient:
         """Списания с датой начала от start включительно до end не включая."""
         return list(self._iter_worklogs(start, end))
 
-    def _iter_worklogs(self, start: date, end: date) -> Iterator[Worklog]:
-        jql = f'worklogDate >= "{start:%Y-%m-%d}" AND worklogDate < "{end:%Y-%m-%d}"'
+    def _search(self, jql: str, fields: str) -> Iterator[dict]:
         offset = 0
         while True:
-            page = self._get("/rest/api/2/search", jql=jql, fields="project,worklog",
+            page = self._get("/rest/api/2/search", jql=jql, fields=fields,
                              startAt=offset, maxResults=self.page_size)
             issues = page.get("issues", [])
-            for issue in issues:
-                yield from self._issue_worklogs(issue, start, end)
+            yield from issues
             offset += len(issues)
             if not issues or offset >= page.get("total", 0):
                 return
+
+    def _iter_worklogs(self, start: date, end: date) -> Iterator[Worklog]:
+        jql = f'worklogDate >= "{start:%Y-%m-%d}" AND worklogDate < "{end:%Y-%m-%d}"'
+        for issue in self._search(jql, "project,worklog"):
+            yield from self._issue_worklogs(issue, start, end)
+
+    def assignments(self, start: date, end: date) -> list[Assignment]:
+        """Задачи с исполнителем, обновленные в периоде (start включительно, end не включая)."""
+        jql = (f'updated >= "{start:%Y-%m-%d}" AND updated < "{end:%Y-%m-%d}" AND assignee is not EMPTY')
+        result = []
+        for issue in self._search(jql, "project,assignee"):
+            fields = issue.get("fields") or {}
+            who = fields.get("assignee") or {}
+            project = (fields.get("project") or {}).get("key") or issue["key"].rsplit("-", 1)[0]
+            result.append(Assignment(issue["key"], project, who.get("name") or "", who.get("key") or "",
+                                     who.get("emailAddress") or ""))
+        return result
 
     def _issue_worklogs(self, issue: dict, start: date, end: date) -> Iterator[Worklog]:
         key = issue["key"]
