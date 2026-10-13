@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import openpyxl
+import openpyxl.worksheet.properties
 from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 
@@ -163,10 +164,13 @@ def write_excel(s: Summary, path: Path, detail: bool = False) -> None:
         if len(names) > 1 or label.startswith("Итого"):
             for i in range(1, total_col + 1):
                 ws.cell(row, i).font = Font(bold=True)
-    ws.column_dimensions["A"].width = 44
+    ws.column_dimensions["A"].width = 54
     for i in range(2, len(columns) + 3):
-        ws.column_dimensions[get_column_letter(i)].width = 16
+        ws.column_dimensions[get_column_letter(i)].width = 18
     ws.freeze_panes = "B4"
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
+    ws.sheet_properties.pageSetUpPr = openpyxl.worksheet.properties.PageSetupProperties(fitToPage=True)
 
     if detail:
         wd = wb.create_sheet("Сотрудники")

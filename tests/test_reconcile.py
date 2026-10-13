@@ -50,6 +50,12 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(out.no_project, {"Гарантии": 1})
         self.assertEqual({n for n, _ in out.no_employee}, {"Без Логина", "Неизвестный Человек"})
 
+    def test_empty_login_means_not_checked_even_with_email(self):
+        roster = [emp(1, "Директор Д", "", email="d@x.ru")]
+        out = self.run_rec([alloc("Директор Д", "ABBID", 1.0)], roster=roster)
+        self.assertEqual(out.flagged, [])
+        self.assertEqual(out.no_employee[0][0], "Директор Д")
+
     def test_zero_and_small_shares_are_skipped(self):
         rows = [alloc("Сидоров Сергей", "ABBID", 0.0), alloc("Сидоров Сергей", "Факторинг", 0.04)]
         self.assertEqual(self.run_rec(rows, min_share=0.05).checked, 0)

@@ -93,8 +93,9 @@ def reconcile(month: str, allocations: list[dict], roster: list[Employee], workl
         if employee is None:
             out.no_employee.append((row["employee"], "нет в списке сотрудников (проверьте написание ФИО)"))
             continue
-        if not employee.jira_login and not employee.email:
-            out.no_employee.append((row["employee"], "в списке сотрудников нет логина Jira"))
+        if not employee.jira_login:
+            # пустой логин означает, что человек не работает в Jira (руководство, бухгалтерия), его не проверяем
+            out.no_employee.append((row["employee"], "в списке сотрудников нет логина Jira, не проверяется"))
             continue
         keys = jira_keys.get(key(row["project"]))
         if not keys:

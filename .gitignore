@@ -5,3 +5,4 @@ config/employee_aliases.csv
 *.xlsx
 *.sqlite
 __pycache__/
+config/headcount_exclude.txt
