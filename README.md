@@ -40,6 +40,36 @@
 
 **Доступ.** Зарплаты хранятся в `out/costs.sqlite`, отдельно от аллокации (`out/allocation.sqlite`). Файл доступен только владельцу (права 600). Запускать эти два шага должен тот, у кого есть доступ к финансовым данным. Остальным достаточно сводки по проектам. Файлы xlsx, sqlite и каталог `out/` в репозиторий не попадают.
 
+## Быстрый старт на macOS (расходы по проектам за месяц)
+
+Один раз:
+
+    cd ~
+    git clone -b claude/jira-confluence-task-mjxean https://github.com/tooholyforu/Auto.git
+    cd Auto
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip install -r requirements.txt
+    mkdir -p data/1c
+
+Положите файлы (`open data` открывает папку): аллокацию Кости в `data/` и шесть выгрузок 1С в `data/1c/` под любыми именами.
+
+Каждый раз в новом окне терминала и после обновления кода:
+
+    cd ~/Auto
+    git pull
+    source .venv/bin/activate
+    pip install -r requirements.txt
+
+Запуск (месяц меняйте на нужный):
+
+    python allocation_import.py "data/allocation.xlsx"
+    python onec_import.py --month 2026-09 --dir data/1c
+    python cost_report.py --month 2026-09
+    open out/costs
+
+Результат: `out/costs/projects-2026-09.xlsx` (итог по проектам) и `out/costs/projects-2026-09-notes.md` (замечания). Отчеты по шагам: `out/report.md` (аллокация) и `out/costs/costs-load-2026-09.md` (загрузка 1С). Папка `out` создается там, где запущена команда, поэтому запускайте из `~/Auto`.
+
 ## Сверка аллокации с Jira
 
 Правило: если у человека за месяц указан проект (например, 10%), а в Jira у него по этому проекту нет задач, случай подсвечивается и уходит на ручной разбор. Ничего не исправляется само.
