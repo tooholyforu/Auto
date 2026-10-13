@@ -16,9 +16,9 @@
 Столбцы ищутся по названиям в шапке, а не по буквам. В базе лежат зарплаты, поэтому база
 расходов хранится отдельно от базы аллокации и должна быть доступна только финансам.
 
-Пример:
-    python onec_import.py --month 2026-09 --staff staff.xlsx --payroll payroll.xlsx \\
-        --taxes taxes_sep.xlsx --taxes-prev taxes_aug.xlsx --ndfl ndfl.xlsx --card51 card51.xls
+Пример: все шесть файлов лежат в одной папке, имена не важны, отчеты узнаются по содержимому:
+    python onec_import.py --month 2026-09 --dir data/1c
+Или файлы по одному: --staff, --payroll, --taxes, --taxes-prev, --ndfl, --card51.
 """
 from __future__ import annotations
 
@@ -226,6 +226,14 @@ def read_payroll(path: Path, non_people: set[str], month: str, issues: list[Issu
     return out
 
 
+def taxes_period(rows: list[list]) -> str | None:
+    """Месяц отчета "Налоги и взносы (кратко)": значение под подписью "Период формирования отчета"."""
+    for i, row in enumerate(rows[:12]):
+        if isinstance(row[0], str) and key(row[0]).startswith("период формирования"):
+            return next((month_of(v) for r in rows[i:i + 3] for v in r if v is not None and month_of(v)), None)
+    return None
+
+
 def read_taxes(path: Path, non_people: set[str], expected: str, month: str, issues: list[Issue], what: str) -> Totals:
     """Налоги и взносы (кратко): единый тариф плюс несчастные случаи."""
     rows = read_sheet(path)
@@ -242,9 +250,7 @@ def read_taxes(path: Path, non_people: set[str], expected: str, month: str, issu
             out.control = amount
         elif is_person(name, non_people) and not re.search(r"(ООО|АО|ПАО|ИП)\b", name):
             out.add(name, amount, i + 1)
-    for i, row in enumerate(rows[:h]):
-        if isinstance(row[0], str) and key(row[0]).startswith("период формирования"):
-            out.period = next((month_of(v) for r in rows[i:i + 3] for v in r if v is not None and month_of(v)), None)
+    out.period = taxes_period(rows)
     _check_period(out.period, expected, f"{path.name} ({what})", issues, month)
     return out
 
@@ -323,6 +329,58 @@ def read_card51(path: Path, month: str, issues: list[Issue]) -> Totals:
         issues.append(Issue(INFO, month, 0, f"{path.name}: суммы выплат взяты из столбца {out_cols}"))
     # контрольная строка карточки содержит итоговые обороты по кредиту
     return out
+
+
+# --------------------------------------------------------------------------
+# Автоопределение отчетов в папке
+# --------------------------------------------------------------------------
+
+REPORT_NAMES = {"staff": "Штатные сотрудники", "payroll": "Анализ зарплаты по сотрудникам",
+                "taxes": "Налоги и взносы (кратко) за месяц расчета",
+                "taxes_prev": "Налоги и взносы (кратко) за предыдущий месяц",
+                "ndfl": "Анализ НДФЛ по месяцам", "card51": "Карточка счета 51"}
+REPORT_MARKERS = [("staff", "штатные сотрудники"), ("payroll", "анализ зарплаты по сотрудникам"),
+                  ("taxes", "налоги и взносы"), ("ndfl", "анализ ндфл"), ("card51", "карточка счета 51")]
+
+
+def detect_reports(folder: Path, month: str) -> tuple[dict[str, Path], list[str]]:
+    """Узнает выгрузки 1С по заголовку внутри файла, имя файла не важно.
+
+    Два отчета "Налоги и взносы" различаются месяцем: за месяц расчета и за предыдущий.
+    Возвращает найденные файлы по ролям и список замечаний (лишние и неопознанные файлы).
+    """
+    if not folder.is_dir():
+        raise SystemExit(f"{folder}: не папка или ее нет")
+    found: dict[str, list[Path]] = {}
+    notes: list[str] = []
+    for path in sorted(folder.iterdir()):
+        if path.suffix.lower() not in (".xlsx", ".xls") or path.name.startswith(("~$", ".")):
+            continue
+        try:
+            rows = read_sheet(path)
+        except Exception:        # файл поврежден или это не Excel: не мешаем остальным
+            notes.append(f"{path.name}: файл не удалось прочитать, пропущен")
+            continue
+        header = [key(v) for r in rows[:10] for v in r if isinstance(v, str)]
+        role = next((r for r, marker in REPORT_MARKERS if any(marker in t for t in header)), None)
+        if role == "taxes":
+            period = taxes_period(rows)
+            if period == month:
+                role = "taxes"
+            elif period == prev_month(month):
+                role = "taxes_prev"
+            else:
+                notes.append(f"{path.name}: отчет «Налоги и взносы» за {period or 'неизвестный месяц'}, "
+                             f"а нужны {prev_month(month)} и {month}, пропущен")
+                continue
+        if role is None:
+            notes.append(f"{path.name}: не похож на выгрузку 1С для расчета, пропущен")
+            continue
+        found.setdefault(role, []).append(path)
+    clashes = [f"«{REPORT_NAMES[r]}»: {', '.join(p.name for p in paths)}" for r, paths in found.items() if len(paths) > 1]
+    if clashes:
+        raise SystemExit("в папке несколько файлов подходят под один отчет, оставьте по одному:\n  " + "\n  ".join(clashes))
+    return {r: paths[0] for r, paths in found.items()}, notes
 
 
 # --------------------------------------------------------------------------
@@ -454,19 +512,34 @@ def write_report(res: CostResult, path: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--month", required=True, help="месяц расчета ГГГГ-ММ")
+    p.add_argument("--dir", type=Path, help="папка с выгрузками 1С: отчеты определяются по содержимому, имена файлов не важны")
     for flag, text in (("staff", "Штатные сотрудники"), ("payroll", "Анализ зарплаты по сотрудникам (помесячно)"),
                        ("taxes", "Налоги и взносы (кратко) за месяц расчета"),
                        ("taxes-prev", "Налоги и взносы (кратко) за предыдущий месяц"),
                        ("ndfl", "Анализ НДФЛ по месяцам"), ("card51", "Карточка счета 51, статья Оклады")):
-        p.add_argument(f"--{flag}", type=Path, required=True, help=text)
+        p.add_argument(f"--{flag}", type=Path, help=text + " (если не задана --dir)")
     p.add_argument("--ndfl-months", nargs="+", help="секции отчета НДФЛ, которые учитывать (по умолчанию месяц расчета)")
     p.add_argument("--db", type=Path, default=Path("out/costs.sqlite"), help="база расходов (доступ только финансам)")
     p.add_argument("--out", type=Path, default=Path("out/costs"), help="папка для отчета о загрузке")
     p.add_argument("--strict", action="store_true", help="завершиться с кодом 1, если есть ошибки")
     args = p.parse_args(argv)
 
-    res = collect_costs(args.month, args.staff, args.payroll, args.taxes, args.taxes_prev, args.ndfl, args.card51,
-                        args.ndfl_months)
+    paths = {"staff": args.staff, "payroll": args.payroll, "taxes": args.taxes, "taxes_prev": args.taxes_prev,
+             "ndfl": args.ndfl, "card51": args.card51}
+    if args.dir:
+        detected, notes = detect_reports(args.dir, args.month)
+        for role, path in detected.items():
+            paths[role] = paths[role] or path          # явно заданный файл важнее найденного
+        print(f"Отчеты в {args.dir}:")
+        for role, name in REPORT_NAMES.items():
+            print(f"  {name}: {paths[role].name if paths[role] else 'НЕ НАЙДЕН'}")
+        for note in notes:
+            print(f"  ({note})")
+    missing = [REPORT_NAMES[r] for r, path in paths.items() if path is None]
+    if missing:
+        raise SystemExit("не хватает отчетов: " + "; ".join(missing) + ". Укажите --dir с папкой или отдельные файлы.")
+    res = collect_costs(args.month, paths["staff"], paths["payroll"], paths["taxes"], paths["taxes_prev"], paths["ndfl"],
+                        paths["card51"], args.ndfl_months)
     save_costs(res, args.db)
     write_report(res, args.out / f"costs-load-{args.month}.md")
     errors = sum(i.level == ERROR for i in res.issues)

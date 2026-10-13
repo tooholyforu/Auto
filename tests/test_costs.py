@@ -162,6 +162,48 @@ class OnecTests(unittest.TestCase):
         db.close()
         self.assertTrue((d / "o" / "costs-load-2026-09.md").exists())
 
+    def junk_folder(self):
+        """Файлы под безликими именами и лишний файл: имена не должны играть роли."""
+        folder = self.dir / "mess"
+        folder.mkdir()
+        for i, name in enumerate(["staff", "payroll", "taxes", "taxes_prev", "ndfl", "card51"], 1):
+            (self.dir / f"{name}.xlsx").rename(folder / f"____{i}.xlsx")
+        sheet(folder / "ТЗ.xlsx", [row(A="Проблематика"), row(A="Данные могут меняться")])
+        (folder / "~$lock.xlsx").write_text("мусор")
+        (folder / "readme.txt").write_text("не Excel")
+        return folder
+
+    def test_detect_reports_by_content(self):
+        folder = self.junk_folder()
+        found, notes = oc.detect_reports(folder, "2026-09")
+        self.assertEqual(set(found), {"staff", "payroll", "taxes", "taxes_prev", "ndfl", "card51"})
+        self.assertEqual(found["taxes"].name, "____3.xlsx")          # сентябрь
+        self.assertEqual(found["taxes_prev"].name, "____4.xlsx")     # август
+        self.assertTrue(any("ТЗ.xlsx" in n for n in notes))
+
+    def test_cli_with_dir_and_explicit_override(self):
+        folder = self.junk_folder()
+        argv = ["--month", "2026-09", "--dir", str(folder), "--db", str(self.dir / "c.sqlite"), "--out", str(self.dir / "o")]
+        self.assertEqual(oc.main(argv), 0)
+        db = sqlite3.connect(self.dir / "c.sqlite")
+        self.assertEqual(db.execute("select count(*) from employee_costs").fetchone()[0], 4)
+        db.close()
+
+    def test_missing_and_duplicate_reports_are_reported(self):
+        folder = self.junk_folder()
+        (folder / "____6.xlsx").unlink()
+        with self.assertRaisesRegex(SystemExit, "Карточка счета 51"):
+            oc.main(["--month", "2026-09", "--dir", str(folder), "--db", str(self.dir / "c.sqlite"), "--out", str(self.dir / "o")])
+        sheet(folder / "copy.xlsx", [row(A="Штатные сотрудники"), row(A="x")])
+        with self.assertRaisesRegex(SystemExit, "несколько файлов"):
+            oc.detect_reports(folder, "2026-09")
+
+    def test_taxes_of_unexpected_month_are_not_used(self):
+        folder = self.junk_folder()
+        found, notes = oc.detect_reports(folder, "2026-10")             # нужны сентябрь и октябрь, а август лишний
+        self.assertNotIn("____4.xlsx", [path.name for path in found.values()])
+        self.assertTrue(any("за 2026-08" in n for n in notes))
+
     def test_helpers(self):
         self.assertEqual(oc.parse_rate("2/5"), 0.4)
         self.assertEqual(oc.parse_rate("0,5"), 0.5)
