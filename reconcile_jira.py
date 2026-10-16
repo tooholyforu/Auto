@@ -116,6 +116,33 @@ def reconcile(month: str, allocations: list[dict], roster: list[Employee], workl
     return out
 
 
+def activity_by_project(roster: list[Employee], worklogs: list[Worklog], assignments: list[Assignment],
+                        project_map: dict[str, list[tuple[str, float]]]) -> tuple[dict[str, dict[str, dict[str, float]]], set[str]]:
+    """Активность в Jira для подсказок в веб-интерфейсе.
+
+    Возвращает: id сотрудника из 1С -> проект аллокации -> {"tasks", "hours"} и множество проектов
+    аллокации (в нормализованном виде key()), которые связаны с Jira.
+    """
+    by_login = {key(e.jira_login): e for e in roster if e.jira_login}
+    by_email = {key(e.email): e for e in roster if e.email}
+    targets_of = lambda jira_key: [project for project, _ in project_map.get(key(jira_key), [])]   # noqa: E731
+    result: dict[str, dict[str, dict[str, float]]] = {}
+
+    def add(owner: Employee | None, jira_key: str, field_name: str, amount: float) -> None:
+        if owner is None:
+            return
+        for project in targets_of(jira_key):
+            slot = result.setdefault(owner.employee_id, {}).setdefault(project, {"tasks": 0, "hours": 0.0})
+            slot[field_name] += amount
+
+    for w in worklogs:
+        add(by_login.get(key(w.login)) or by_login.get(key(w.user_key)) or by_email.get(key(w.email)), w.project_key, "hours", w.seconds / 3600)
+    for a in assignments:
+        add(by_login.get(key(a.login)) or by_login.get(key(a.user_key)) or by_email.get(key(a.email)), a.project_key, "tasks", 1)
+    linked = {key(project) for targets in project_map.values() for project, _ in targets}
+    return result, linked
+
+
 def read_allocations(db_path: Path, month: str) -> list[dict]:
     with contextlib.closing(sqlite3.connect(db_path)) as db:
         check_schema(db, db_path)

@@ -78,6 +78,8 @@ class Result:
     raw_projects: dict[str, set[str]] = field(default_factory=dict)   # проект -> месяцы
     names: dict[str, str] = field(default_factory=dict)               # ключ -> ФИО
     months: list[str] = field(default_factory=list)
+    raw_header: dict[str, list[str]] = field(default_factory=dict)          # месяц -> названия проектов в порядке столбцов
+    project_positions: dict[str, list[str]] = field(default_factory=dict)   # месяц -> проекты аллокации в порядке столбцов
 
     def add(self, level: str, month: str, row: int, message: str) -> None:
         self.issues.append(Issue(level, month, row, message))
@@ -250,6 +252,7 @@ def _read_block(res: Result, rows_v, rows_f, start: int, end: int,
         res.add(ERROR, month, start, "в блоке не найдена шапка с названиями проектов")
         return []
     header_idx, projects = header
+    res.raw_header[month] = [projects[c] for c in sorted(projects)]
     out: list[SourceRow] = []
 
     for i in range(header_idx + 1, end):
@@ -385,6 +388,13 @@ def _load_block(res: Result, source: list[SourceRow], month: str, forecast: bool
             return project_map[key(raw)]
         return [(default_names.setdefault(key(raw), raw), 1.0)]
 
+    order: list[str] = []
+    for raw in res.raw_header.get(month, []):
+        for project, _ in targets(raw):
+            if project not in order:
+                order.append(project)
+    res.project_positions[month] = order
+
     for r in sorted(accepted.values(), key=lambda r: r.row):
         total = sum(r.shares.values())
         k = key(r.name)
@@ -486,6 +496,11 @@ CREATE TABLE IF NOT EXISTS employee_months (
     source TEXT NOT NULL,
     source_row INTEGER NOT NULL,
     PRIMARY KEY (month, employee_id));
+CREATE TABLE IF NOT EXISTS month_projects (
+    month TEXT NOT NULL,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    position INTEGER,
+    PRIMARY KEY (month, project_id));
 CREATE TABLE IF NOT EXISTS allocations (
     month TEXT NOT NULL,
     employee_id INTEGER NOT NULL,
@@ -505,15 +520,28 @@ def check_schema(db: sqlite3.Connection, path: Path) -> None:
                          "запустите allocation_import.py с исходным Excel еще раз")
 
 
+def locked_months(db: sqlite3.Connection) -> set[str]:
+    """Месяцы, закрытые в веб-интерфейсе (таблицы может и не быть)."""
+    try:
+        return {r[0] for r in db.execute("SELECT month FROM month_status WHERE locked = 1")}
+    except sqlite3.OperationalError:
+        return set()
+
+
 def save_to_db(res: Result, path: Path) -> None:
     """Записывает месяцы из res в базу. Данные тех же месяцев заменяются, остальные не трогаются."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with contextlib.closing(sqlite3.connect(path)) as db:
         check_schema(db, path)
+        blocked = locked_months(db) & set(res.months)
+        if blocked:
+            raise SystemExit(f"месяцы {', '.join(sorted(blocked))} закрыты в веб-интерфейсе, загрузка их не перезапишет. "
+                             "Откройте месяц заново в веб-интерфейсе или уберите его из загрузки")
         db.executescript(SCHEMA)
         for month in res.months:
             db.execute("DELETE FROM allocations WHERE month = ?", (month,))
             db.execute("DELETE FROM employee_months WHERE month = ?", (month,))
+            db.execute("DELETE FROM month_projects WHERE month = ?", (month,))
 
         def ref(table: str, name: str, **extra) -> int:
             db.execute(f"INSERT OR IGNORE INTO {table} (name) VALUES (?)", (name,))
@@ -535,11 +563,28 @@ def save_to_db(res: Result, path: Path) -> None:
             db.execute(
                 "INSERT INTO allocations (month, employee_id, project_id, share, hours) VALUES (?,?,?,?,?)",
                 (r["month"], employees[r["employee"]], ref("projects", r["project"]), r["share"], r.get("hours")))
+        for month, names in res.project_positions.items():
+            for position, name in enumerate(names):
+                db.execute("INSERT OR REPLACE INTO month_projects (month, project_id, position) VALUES (?,?,?)",
+                           (month, ref("projects", name), position))
         db.commit()
+
+
+def has_web_edits(path: Path) -> bool:
+    if not path.exists():
+        return False
+    with contextlib.closing(sqlite3.connect(path)) as db:
+        try:
+            return db.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0] > 0
+        except sqlite3.OperationalError:
+            return False
 
 
 def write_sqlite(res: Result, path: Path) -> None:
     """Пересоздает базу с нуля (для разового импорта из Excel)."""
+    if has_web_edits(path):
+        raise SystemExit(f"{path}: в базе есть правки, внесенные через веб-интерфейс, пересоздание их удалит. "
+                         "Укажите другую папку результатов (--out) или удалите файл базы вручную, если это нужно")
     path.unlink(missing_ok=True)
     save_to_db(res, path)
 

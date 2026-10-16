@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Журнал изменений{% endblock %}
+{% block css %}
+table.log{border-collapse:collapse;width:100%;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+table.log th,table.log td{padding:7px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+table.log th{background:var(--head);font-weight:600}
+.num{font-variant-numeric:tabular-nums}
+{% endblock %}
+{% block content %}
+<h2 style="margin:4px 0 12px">Журнал изменений{% if month %}, {{ month }}{% endif %}</h2>
+<form method="get" style="margin-bottom:12px">
+  <select name="month" onchange="this.form.submit()">
+    <option value="">все месяцы</option>
+    {% for m in months %}<option value="{{ m }}" {% if m == month %}selected{% endif %}>{{ m }}</option>{% endfor %}
+  </select>
+</form>
+{% if not entries %}
+  <p class="muted">Записей пока нет. Журнал заполняется, когда кто-то сохраняет изменения в таблице.</p>
+{% else %}
+<table class="log">
+  <thead><tr><th>Когда</th><th>Кто</th><th>Месяц</th><th>Действие</th><th>Сотрудник</th><th>Проект</th><th>Было</th><th>Стало</th><th>Примечание</th></tr></thead>
+  <tbody>
+  {% for e in entries %}
+    <tr>
+      <td class="num">{{ e.at.replace('T', ' ') }}</td><td>{{ e.user }}</td><td>{{ e.month }}</td><td>{{ e.action }}</td>
+      <td>{{ e.employee or '' }}</td><td>{{ e.project or '' }}</td>
+      <td class="num">{{ (e.old_value|pct ~ '%') if e.old_value is not none and e.old_value else ('0%' if e.old_value is not none else '') }}</td>
+      <td class="num">{{ (e.new_value|pct ~ '%') if e.new_value is not none and e.new_value else ('0%' if e.new_value is not none else '') }}</td>
+      <td>{{ e.note or '' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

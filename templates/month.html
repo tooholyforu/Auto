@@ -1,0 +1,296 @@
+{% extends "base.html" %}
+{% block title %}Аллокация {{ view.month }}{% endblock %}
+{% block css %}
+.bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.bar .grow{flex:1}
+.month-nav{display:flex;align-items:center;gap:6px}
+.month-nav a{display:inline-block;padding:6px 10px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--text);background:var(--card)}
+.month-nav a.off{opacity:.35;pointer-events:none}
+.month-nav select{font-weight:650;font-size:15px}
+.chip{display:inline-block;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:600;border:1px solid}
+.chip.draft{color:var(--warn);background:var(--warn-bg);border-color:var(--warn)}
+.chip.locked{color:var(--ok);background:var(--ok-bg);border-color:var(--ok)}
+.note{font-size:12.5px;color:var(--muted);margin:2px 0 10px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin:6px 0 10px}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.stats{display:flex;gap:18px;font-size:13px;color:var(--muted);margin-left:auto}
+.stats b{color:var(--text)}
+.wrap{overflow:auto;max-height:calc(100vh - 300px);min-height:220px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+table.grid{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%}
+table.grid th,table.grid td{padding:5px 8px;border-bottom:1px solid var(--line);background:var(--row-bg,var(--card));vertical-align:middle}
+table.grid thead th{position:sticky;top:0;z-index:3;background:var(--head);text-align:center;font-weight:650;white-space:nowrap;padding:9px 8px}
+table.grid th.name,table.grid td.name{position:sticky;left:0;z-index:2;min-width:270px;max-width:270px;text-align:left;border-right:1px solid var(--line)}
+table.grid thead th.name{z-index:4}
+td.name .n{font-weight:600;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+td.name .p{font-size:12px;color:var(--muted);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+td.hist{min-width:230px;max-width:230px;font-size:12px;color:var(--muted)}
+td.hist .last{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+td.hist details summary{cursor:pointer;color:var(--accent);list-style:none}
+td.hist details div{margin-top:3px}
+td.cell{text-align:center;min-width:96px;padding:4px 6px}
+td.cell input{width:62px;text-align:right;padding:5px 7px;font-variant-numeric:tabular-nums}
+td.cell input.err{border-color:var(--bad);background:var(--bad-bg)}
+td.cell input:disabled{background:transparent;border-color:transparent;color:var(--text);opacity:1}
+td.cell .j{display:block;font-size:11px;margin-top:2px;white-space:nowrap}
+td.cell .j.has{color:var(--ok)}
+td.cell .j.none{display:none}
+td.cell.warn input:not(:disabled){border-color:var(--warn)}
+td.cell.warn{--row-bg:var(--warn-bg)}
+td.cell.warn .j.none{display:block;color:var(--warn);font-weight:600}
+td.sum{text-align:center;font-weight:700;font-variant-numeric:tabular-nums;min-width:74px}
+tr.ok{--row-bg:var(--card)}
+tr.ok td.sum{color:var(--ok)}
+tr.bad{--row-bg:var(--bad-bg)}
+tr.bad td.sum{color:var(--bad)}
+tr.empty td.sum{color:var(--muted)}
+td.act{width:34px;text-align:center}
+td.act button{border:none;background:transparent;color:var(--muted);padding:3px 7px;font-size:16px}
+td.act button:hover{color:var(--bad)}
+tfoot td{position:sticky;bottom:0;z-index:3;background:var(--head);font-weight:650;text-align:center;border-top:1px solid var(--line);font-variant-numeric:tabular-nums}
+tfoot td.name{text-align:left;z-index:4}
+.tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0}
+.tools form{display:flex;gap:6px;align-items:center}
+.empty-state{border:1px dashed var(--line);border-radius:12px;padding:28px;text-align:center;background:var(--card)}
+.sr{position:absolute;left:-9999px}
+{% endblock %}
+
+{% block content %}
+{% set locked = view.locked %}
+<div class="bar">
+  <div class="month-nav">
+    <a class="{{ '' if prev_month else 'off' }}" href="{{ url_for('month_page', month=prev_month) if prev_month else '#' }}" title="Предыдущий месяц" aria-label="Предыдущий месяц">&larr;</a>
+    <label class="sr" for="monthSelect">Месяц</label>
+    <select id="monthSelect" onchange="location.href='{{ url_for('go') }}?month='+this.value">
+      {% for m in view.months %}<option value="{{ m }}" {% if m == view.month %}selected{% endif %}>{{ m }}</option>{% endfor %}
+      {% if view.month not in view.months %}<option value="{{ view.month }}" selected>{{ view.month }} (новый)</option>{% endif %}
+    </select>
+    <a class="{{ '' if next_month else 'off' }}" href="{{ url_for('month_page', month=next_month) if next_month else '#' }}" title="Следующий месяц" aria-label="Следующий месяц">&rarr;</a>
+    <a href="{{ url_for('go') }}?month={{ new_month }}" title="Открыть следующий месяц" style="margin-left:6px">+ {{ new_month }}</a>
+  </div>
+  <span class="chip {{ 'locked' if locked else 'draft' }}">{{ 'Месяц закрыт' if locked else 'Черновик' }}</span>
+  <span class="grow"></span>
+  <label for="user" class="muted">Ваше имя</label>
+  <input id="user" placeholder="кто вносит правки" autocomplete="name" style="width:190px">
+</div>
+
+<div class="note">{{ jira.note }}</div>
+
+{% if not view.rows %}
+  <div class="empty-state">
+    <p style="margin-top:0"><b>За {{ view.month }} пока нет данных.</b></p>
+    {% if copy_from %}
+      <form method="post" action="{{ url_for('copy', month=view.month) }}" onsubmit="return prep(this)">
+        <input type="hidden" name="user">
+        <button class="primary">Создать на основе {{ copy_from }}</button>
+      </form>
+      <p class="muted">Сотрудники и доли переносятся из прошлого месяца, потом их можно поправить.</p>
+    {% else %}
+      <p class="muted">Загрузите аллокацию из Excel (allocation_import.py) или добавьте сотрудников ниже.</p>
+    {% endif %}
+  </div>
+{% endif %}
+
+{% if view.rows %}
+<form id="grid" method="post" action="{{ url_for('save', month=view.month) }}" onsubmit="return prep(this)">
+  <input type="hidden" name="user">
+  <div class="bar">
+    <label class="sr" for="q">Поиск</label>
+    <input id="q" type="search" placeholder="Поиск по ФИО" style="width:240px">
+    <label><input type="checkbox" id="onlyBad"> только не доведенные до 100%</label>
+    <div class="stats"><span>Сотрудников: <b id="stPeople">{{ view.rows|length }}</b></span><span>Готово: <b id="stOk">0</b></span><span>Нужно поправить: <b id="stBad">0</b></span></div>
+  </div>
+  <div class="legend">
+    <span><i style="background:var(--ok)"></i>сумма 100%</span>
+    <span><i style="background:var(--bad)"></i>сумма не равна 100%</span>
+    {% if jira.available %}<span><i style="background:var(--warn)"></i>доля есть, а задач в Jira по проекту нет (для разбора)</span>{% endif %}
+    <span>Доли вводятся в процентах, например 12,5</span>
+  </div>
+
+  <div class="wrap">
+    <table class="grid">
+      <thead>
+        <tr>
+          <th class="name">Сотрудник</th>
+          <th>История</th>
+          {% for pid, pname in view.projects %}<th>{{ pname }}</th>{% endfor %}
+          <th>Сумма, %</th>
+          {% if not locked %}<th></th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in view.rows %}
+        <tr data-name="{{ row.name|lower }}" data-id="{{ row.employee_id }}">
+          <td class="name"><span class="n" title="{{ row.name }}">{{ row.name }}</span><span class="p" title="{{ row.position }}">{{ row.position or ' ' }}</span></td>
+          <td class="hist">
+            {% if row.history %}
+              {% set m0, d0 = row.history[0] %}
+              <span class="last" title="{% for p, s in d0.items() %}{{ p }} {{ s|pct }}%{% if not loop.last %}, {% endif %}{% endfor %}">{{ m0 }}: {% for p, s in d0.items() %}{{ p }} {{ s|pct }}{% if not loop.last %} · {% endif %}{% endfor %}</span>
+              {% if row.history|length > 1 %}
+              <details><summary>ещё {{ row.history|length - 1 }} мес.</summary>
+                {% for m, d in row.history[1:] %}<div>{{ m }}: {% for p, s in d.items() %}{{ p }} {{ s|pct }}{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endfor %}
+              </details>
+              {% endif %}
+            {% else %}<span class="last">нет данных за прошлые месяцы</span>{% endif %}
+          </td>
+          {% for pid, pname in view.projects %}
+            {% set hint = jira.cells.get(row.employee_id ~ '-' ~ pid) if jira.available else none %}
+            <td class="cell" {% if hint is not none %}data-jira="{{ 1 if (hint.tasks or hint.hours) else 0 }}"{% endif %}>
+              <input name="v-{{ row.employee_id }}-{{ pid }}" value="{{ row.shares.get(pid)|pct }}" inputmode="decimal" autocomplete="off"
+                     aria-label="{{ row.name }}, {{ pname }}, %" {% if locked %}disabled{% endif %}>
+              {% if hint is not none %}
+                {% if hint.tasks or hint.hours %}
+                  <span class="j has" title="Задачи и списания человека в этом проекте за месяц">{{ (hint.tasks|int ~ ' зад.') if hint.tasks else '' }}{{ ' · ' if hint.tasks and hint.hours else '' }}{{ (hint.hours|round|int ~ ' ч') if hint.hours else '' }}</span>
+                {% else %}
+                  <span class="j none" title="В Jira у этого человека нет задач по проекту за месяц">нет задач</span>
+                {% endif %}
+              {% endif %}
+            </td>
+          {% endfor %}
+          <td class="sum">–</td>
+          {% if not locked %}<td class="act"><button type="button" title="Убрать из месяца" aria-label="Убрать {{ row.name }} из месяца"
+              onclick="removeRow({{ row.employee_id }}, {{ row.name|tojson }})">×</button></td>{% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td class="name">Всего человек-долей</td><td></td>
+          {% for pid, pname in view.projects %}<td class="ptotal" data-pid="{{ pid }}">0</td>{% endfor %}
+          <td id="grand">0</td>{% if not locked %}<td></td>{% endif %}
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  <div class="tools">
+    {% if not locked %}<button class="primary" id="saveBtn" type="submit">Сохранить</button>{% endif %}
+    <span id="dirtyNote" class="muted" hidden>Есть несохраненные изменения</span>
+  </div>
+</form>
+{% endif %}
+
+<div class="tools">
+  {% if not locked %}
+    {% if view.rows and copy_from %}
+    <form method="post" action="{{ url_for('copy', month=view.month) }}" onsubmit="return prep(this, true)">
+      <input type="hidden" name="user"><button title="Добавит отсутствующих и заполнит тех, у кого долей еще нет">Заполнить из {{ copy_from }}</button>
+    </form>
+    {% endif %}
+    {% if view.candidates %}
+    <form method="post" action="{{ url_for('add_employee', month=view.month) }}" onsubmit="return prep(this, true)">
+      <input type="hidden" name="user">
+      <select name="employee_id" aria-label="Сотрудник из базы"><option value="">Добавить из базы…</option>
+        {% for eid, ename in view.candidates %}<option value="{{ eid }}">{{ ename }}</option>{% endfor %}</select>
+      <button>Добавить</button>
+    </form>
+    {% endif %}
+    <form method="post" action="{{ url_for('add_employee', month=view.month) }}" onsubmit="return prep(this, true)">
+      <input type="hidden" name="user"><input name="name" placeholder="Новый сотрудник (ФИО)" aria-label="ФИО нового сотрудника"><button>Создать</button>
+    </form>
+    <form method="post" action="{{ url_for('add_project', month=view.month) }}" onsubmit="return prep(this, true)">
+      <input type="hidden" name="user"><input name="name" placeholder="Новый проект" aria-label="Название нового проекта"><button>Добавить проект</button>
+    </form>
+    <span class="grow" style="flex:1"></span>
+    {% if view.rows %}
+    <form method="post" action="{{ url_for('lock', month=view.month) }}" onsubmit="return prep(this, true)">
+      <input type="hidden" name="user"><button id="lockBtn" type="submit" disabled title="Закрыть можно, когда у всех сумма 100% и нет несохраненных правок">Закрыть месяц</button>
+    </form>
+    {% endif %}
+  {% else %}
+    <form method="post" action="{{ url_for('unlock', month=view.month) }}" onsubmit="return prep(this, true) && confirm('Открыть закрытый месяц для правок?')">
+      <input type="hidden" name="user"><button>Открыть заново</button>
+    </form>
+  {% endif %}
+</div>
+
+<form id="act" method="post" style="display:none" onsubmit="return prep(this, true)">
+  <input type="hidden" name="user"><input type="hidden" name="employee_id">
+</form>
+
+<script>
+(function(){
+  var userBox = document.getElementById('user');
+  try { userBox.value = localStorage.getItem('allocUser') || ''; } catch(e) {}
+  userBox.addEventListener('input', function(){ try { localStorage.setItem('allocUser', userBox.value); } catch(e) {} });
+
+  var grid = document.getElementById('grid');
+  var rows = grid ? Array.prototype.slice.call(grid.querySelectorAll('tbody tr')) : [];
+  var dirty = false;
+
+  function num(text){
+    text = (text || '').trim().replace(',', '.').replace('%', '');
+    if (text === '') return 0;
+    var n = Number(text);
+    return isFinite(n) ? n : NaN;
+  }
+  function fmt(n){ return (Math.round(n * 100) / 100).toString().replace('.', ','); }
+
+  function recalc(){
+    var ok = 0, bad = 0, anyErr = false, isDirty = false;
+    var pt = {}, grand = 0;
+    rows.forEach(function(tr){
+      var sum = 0, invalid = false;
+      tr.querySelectorAll('td.cell').forEach(function(td){
+        var inp = td.querySelector('input'), v = num(inp.value);
+        if (isNaN(v) || v < 0 || v > 100) { inp.classList.add('err'); invalid = true; anyErr = true; v = 0; }
+        else inp.classList.remove('err');
+        sum += v;
+        if (inp.value !== inp.defaultValue) isDirty = true;
+        td.classList.toggle('warn', td.dataset.jira === '0' && v > 0);
+        var col = td.cellIndex; pt[col] = (pt[col] || 0) + v / 100;
+      });
+      var cell = tr.querySelector('td.sum');
+      var state = invalid ? 'bad' : (sum === 0 ? 'empty' : (Math.abs(sum - 100) < 0.05 ? 'ok' : 'bad'));
+      tr.className = state;
+      cell.textContent = state === 'empty' ? '–' : fmt(sum);
+      if (state === 'ok') ok++; else bad++;
+      grand += sum / 100;
+    });
+    grid && grid.querySelectorAll('tfoot td.ptotal').forEach(function(td){ td.textContent = fmt(pt[td.cellIndex] || 0); });
+    var g = document.getElementById('grand'); if (g) g.textContent = fmt(grand);
+    document.getElementById('stOk') && (document.getElementById('stOk').textContent = ok);
+    document.getElementById('stBad') && (document.getElementById('stBad').textContent = bad);
+    dirty = isDirty;
+    var note = document.getElementById('dirtyNote'); if (note) note.hidden = !dirty;
+    var save = document.getElementById('saveBtn'); if (save) save.disabled = anyErr;
+    var lock = document.getElementById('lockBtn'); if (lock) lock.disabled = dirty || bad > 0 || rows.length === 0;
+    filter();
+  }
+
+  function filter(){
+    var q = (document.getElementById('q') || {value: ''}).value.trim().toLowerCase();
+    var onlyBad = document.getElementById('onlyBad') && document.getElementById('onlyBad').checked;
+    rows.forEach(function(tr){
+      var hide = (q && tr.dataset.name.indexOf(q) === -1) || (onlyBad && tr.classList.contains('ok'));
+      tr.style.display = hide ? 'none' : '';
+    });
+  }
+
+  if (grid) {
+    grid.addEventListener('input', recalc);
+    document.getElementById('q').addEventListener('input', filter);
+    document.getElementById('onlyBad').addEventListener('change', filter);
+    recalc();
+    window.addEventListener('beforeunload', function(e){ if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+  }
+
+  window.prep = function(form, leaving){
+    var name = userBox.value.trim();
+    if (!name) { alert('Укажите, кто вносит правки (поле «Ваше имя» вверху).'); userBox.focus(); return false; }
+    if (leaving && dirty && !confirm('Есть несохраненные изменения, они пропадут. Продолжить?')) return false;
+    if (leaving) dirty = false;
+    form.querySelector('[name=user]').value = name;
+    if (form === grid) dirty = false;
+    return true;
+  };
+
+  window.removeRow = function(id, name){
+    if (!confirm('Убрать «' + name + '» из этого месяца вместе с его долями?')) return;
+    var f = document.getElementById('act');
+    f.action = '{{ url_for("remove_employee", month=view.month) }}';
+    f.elements.employee_id.value = id;
+    if (window.prep(f, true)) f.submit();
+  };
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Аллокация{% endblock %}</title>
+<style>
+:root{
+  --bg:#f4f5f7; --card:#fff; --head:#eef0f4; --line:#d9dde5; --text:#1b2330; --muted:#667085;
+  --accent:#2557d6; --accent-text:#fff; --ok:#15803d; --ok-bg:#e8f6ec; --bad:#b42318; --bad-bg:#fdecea;
+  --warn:#b45309; --warn-bg:#fff4e0; --focus:#9db7f5;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#12151b; --card:#1a1f28; --head:#222836; --line:#2f3747; --text:#e7eaf0; --muted:#9aa4b5;
+    --accent:#6c93f5; --accent-text:#0d1220; --ok:#4ade80; --ok-bg:#16301f; --bad:#f87171; --bad-bg:#3a1c1c;
+    --warn:#fbbf24; --warn-bg:#3a2e14; --focus:#3b5aa8; }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header.top{background:var(--card);border-bottom:1px solid var(--line);padding:10px 20px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+header.top h1{font-size:16px;margin:0;font-weight:650}
+header.top nav a{color:var(--muted);text-decoration:none;margin-right:14px}
+header.top nav a:hover{color:var(--text)}
+main{padding:16px 20px 40px;max-width:1700px;margin:0 auto}
+button,.btn{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;padding:7px 12px;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-text);font-weight:600}
+button:disabled{opacity:.45;cursor:not-allowed}
+input,select{font:inherit;color:var(--text);background:var(--card);border:1px solid var(--line);border-radius:7px;padding:6px 9px}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+.flash{padding:9px 14px;border-radius:9px;margin:0 0 10px;border:1px solid}
+.flash.ok{background:var(--ok-bg);color:var(--ok);border-color:var(--ok)}
+.flash.warn{background:var(--warn-bg);color:var(--warn);border-color:var(--warn)}
+.flash.error{background:var(--bad-bg);color:var(--bad);border-color:var(--bad)}
+.muted{color:var(--muted)}
+{% block css %}{% endblock %}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Аллокация сотрудников по проектам</h1>
+  <nav><a href="{{ url_for('index') }}">Месяц</a><a href="{{ url_for('log') }}">Журнал изменений</a></nav>
+</header>
+<main>
+{% for category, message in get_flashed_messages(with_categories=true) %}
+  <div class="flash {{ category }}" role="status">{{ message }}</div>
+{% endfor %}
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>
