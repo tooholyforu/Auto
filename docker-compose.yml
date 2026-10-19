@@ -1,0 +1,13 @@
+# Запуск: docker compose up -d --build
+# Данные лежат в папке ./work (она монтируется в контейнер как /data).
+services:
+  allocation:
+    build: .
+    image: allocation:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"      # наружу открывает обратный прокси (nginx и т. п.), а не контейнер
+    env_file: .env                 # создайте из .env.example
+    user: "${APP_UID:-10001}:${APP_GID:-10001}"   # владелец файлов в ./work; задайте свой id в .env
+    volumes:
+      - ./work:/data

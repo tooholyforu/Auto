@@ -243,6 +243,79 @@ class AppTests(unittest.TestCase):
         self.assertIn("Данных Jira за 2026-10 нет", app.test_client().get("/m/2026-10").get_data(as_text=True))
 
 
+class AuthTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db = Path(self.tmp.name) / "a.sqlite"
+        build_db(self.db)
+
+    def client(self, auth):
+        return web_app.create_app(web_app.Settings(self.db), secret="t", auth=auth).test_client()
+
+    @staticmethod
+    def basic(user, password):
+        import base64
+        return {"Authorization": "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()}
+
+    def test_basic_auth_protects_everything_but_healthz(self):
+        c = self.client(web_app.Auth("kostya", "секрет"))
+        self.assertEqual(c.get("/healthz").status_code, 200)
+        for path in ("/", "/m/2026-09", "/log"):
+            r = c.get(path)
+            self.assertEqual(r.status_code, 401, path)
+            self.assertIn("Basic", r.headers["WWW-Authenticate"])
+        self.assertEqual(c.get("/m/2026-09", headers=self.basic("kostya", "wrong")).status_code, 401)
+        self.assertEqual(c.get("/m/2026-09", headers=self.basic("other", "секрет")).status_code, 401)
+        self.assertEqual(c.get("/m/2026-09", headers=self.basic("kostya", "секрет")).status_code, 200)
+        self.assertEqual(c.post("/m/2026-09/lock", data={"user": "x"}).status_code, 401)
+
+    def test_login_name_goes_to_journal_and_cannot_be_spoofed(self):
+        c = self.client(web_app.Auth("kostya", "pw"))
+        page = c.get("/m/2026-09", headers=self.basic("kostya", "pw")).get_data(as_text=True)
+        self.assertIn("Вы вошли как", page)
+        self.assertNotIn('placeholder="кто вносит правки"', page)
+        c.post("/m/2026-09/copy", data={"user": "Подмена"}, headers=self.basic("kostya", "pw"))
+        c.post("/m/2026-10/copy", data={"user": "Подмена"}, headers=self.basic("kostya", "pw"))
+        db = ws.open_db(self.db)
+        users = {e["user"] for e in ws.recent_log(db)}
+        db.close()
+        self.assertEqual(users, {"kostya"})
+
+    def test_proxy_header_identifies_user(self):
+        c = self.client(web_app.Auth(user_header="X-Forwarded-User"))
+        self.assertEqual(c.get("/m/2026-09").status_code, 401)                      # прокси не передал пользователя
+        r = c.get("/m/2026-09", headers={"X-Forwarded-User": "ivanov@corp"})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("ivanov@corp", r.get_data(as_text=True))
+
+    def test_network_host_requires_protection(self):
+        import os
+        from unittest import mock
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("WEB_ALLOW_ANONYMOUS", None)
+            web_app.require_protection("127.0.0.1", web_app.Auth())                 # локально можно без входа
+            with self.assertRaisesRegex(SystemExit, "вход не настроен"):
+                web_app.require_protection("0.0.0.0", web_app.Auth())
+            web_app.require_protection("0.0.0.0", web_app.Auth("u", "p"))
+            web_app.require_protection("0.0.0.0", web_app.Auth(user_header="X-User"))
+        with mock.patch.dict(os.environ, {"WEB_ALLOW_ANONYMOUS": "1"}):
+            web_app.require_protection("0.0.0.0", web_app.Auth())
+
+    def test_factory_from_environment(self):
+        import os
+        from unittest import mock
+        env = {"ALLOC_DB": str(self.db), "WEB_USER": "u", "WEB_PASSWORD": "p", "WEB_HOST": "0.0.0.0",
+               "ALLOC_ROSTER": "/nonexistent", "ALLOC_PROJECT_MAP": "/nonexistent"}
+        with mock.patch.dict(os.environ, env):
+            client = web_app.create_app_from_env().test_client()
+        self.assertEqual(client.get("/m/2026-09").status_code, 401)
+        self.assertEqual(client.get("/m/2026-09", headers=self.basic("u", "p")).status_code, 200)
+        with mock.patch.dict(os.environ, {"ALLOC_DB": str(self.db), "WEB_HOST": "0.0.0.0"}, clear=True):
+            with self.assertRaises(SystemExit):
+                web_app.create_app_from_env()
+
+
 class HelperTests(unittest.TestCase):
     def test_formats(self):
         self.assertEqual(web_app.fmt_pct(0.3), "30")

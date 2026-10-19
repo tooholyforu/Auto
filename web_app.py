@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 import math
 import os
 import secrets
@@ -22,7 +23,7 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import urlparse
 
-from flask import Flask, abort, flash, g, redirect, render_template, request, url_for
+from flask import Flask, Response, abort, flash, g, redirect, render_template, request, url_for
 
 import webstore as ws
 from allocation_calc import load_roster, month_bounds
@@ -62,7 +63,36 @@ def parse_percent(raw: str) -> float:
     return value
 
 
-def create_app(settings: Settings, secret: str | None = None) -> Flask:
+@dataclass
+class Auth:
+    """Защита страниц. Пока это один общий логин и пароль (HTTP Basic); имя пользователя в журнале
+    берется из логина или, за прокси с единым входом, из заголовка user_header (например X-Forwarded-User)."""
+    username: str = ""
+    password: str = ""
+    user_header: str = ""
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.username and self.password)
+
+    @property
+    def protected(self) -> bool:
+        return self.enabled or bool(self.user_header)
+
+
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def require_protection(host: str, auth: Auth) -> None:
+    """Не даем открыть форму с данными по сети без входа."""
+    if host not in LOCAL_HOSTS and not auth.protected and os.environ.get("WEB_ALLOW_ANONYMOUS") != "1":
+        raise SystemExit("Сервер доступен по сети, а вход не настроен. Задайте WEB_USER и WEB_PASSWORD "
+                         "(или WEB_USER_HEADER, если вход выполняет прокси). Если доступ закрыт снаружи, "
+                         "можно явно разрешить: WEB_ALLOW_ANONYMOUS=1")
+
+
+def create_app(settings: Settings, secret: str | None = None, auth: Auth | None = None) -> Flask:
+    auth = auth or Auth()
     app = Flask(__name__)
     app.secret_key = secret or os.environ.get("WEB_SECRET") or secrets.token_hex(16)
     app.jinja_env.filters["pct"] = fmt_pct
@@ -79,14 +109,42 @@ def create_app(settings: Settings, secret: str | None = None) -> Flask:
             conn.close()
 
     @app.before_request
+    def authenticate():
+        if request.path == "/healthz":
+            return None
+        if auth.user_header:
+            if not request.headers.get(auth.user_header):
+                abort(401)
+            return None
+        if auth.enabled:
+            given = request.authorization
+            same = lambda a, b: hmac.compare_digest((a or "").encode(), b.encode())      # noqa: E731  (в байтах: допустима кириллица)
+            ok = given is not None and same(given.username, auth.username) and same(given.password, auth.password)
+            if not ok:
+                return Response("Нужен вход", 401, {"WWW-Authenticate": 'Basic realm="Allocation", charset="UTF-8"'})
+        return None
+
+    @app.get("/healthz")
+    def healthz():
+        return "ok"
+
+    @app.before_request
     def same_origin_only():
         if request.method == "POST":
             origin = request.headers.get("Origin")
             if origin and urlparse(origin).netloc != request.host:
                 abort(403)
 
+    def known_user() -> str:
+        """Кто вошел: из заголовка прокси или из логина. Пустая строка, если входа нет."""
+        if auth.user_header:
+            return (request.headers.get(auth.user_header) or "").strip()
+        if auth.enabled and request.authorization:
+            return request.authorization.username or ""
+        return ""
+
     def user() -> str:
-        return (request.form.get("user") or "").strip()
+        return known_user() or (request.form.get("user") or "").strip()
 
     def back(month: str):
         return redirect(url_for("month_page", month=month))
@@ -156,7 +214,8 @@ def create_app(settings: Settings, secret: str | None = None) -> Flask:
         earlier = [m for m in view.months if m < month]
         later = [m for m in view.months if m > month]
         jira = jira_context(month, view)
-        return render_template("month.html", view=view, jira=jira, prev_month=earlier[-1] if earlier else None,
+        return render_template("month.html", view=view, jira=jira, known_user=known_user(),
+                               prev_month=earlier[-1] if earlier else None,
                                next_month=later[0] if later else None, copy_from=view.previous,
                                new_month=next_month_code(max(view.months + [month])))
 
@@ -224,9 +283,25 @@ def create_app(settings: Settings, secret: str | None = None) -> Flask:
     @app.get("/log")
     def log():
         month = request.args.get("month") or None
-        return render_template("log.html", entries=ws.recent_log(db(), month), month=month, months=ws.list_months(db()))
+        return render_template("log.html", entries=ws.recent_log(db(), month), month=month, months=ws.list_months(db()),
+                               known_user=known_user())
 
     return app
+
+
+def auth_from_env() -> Auth:
+    return Auth(os.environ.get("WEB_USER", ""), os.environ.get("WEB_PASSWORD", ""), os.environ.get("WEB_USER_HEADER", ""))
+
+
+def create_app_from_env() -> Flask:
+    """Запуск в контейнере (waitress --call web_app:create_app_from_env). Все настройки из переменных окружения."""
+    env = os.environ
+    roster, project_map = Path(env.get("ALLOC_ROSTER", "config/employees.csv")), Path(env.get("ALLOC_PROJECT_MAP", "config/jira_project_map.csv"))
+    settings = Settings(Path(env.get("ALLOC_DB", "out/allocation.sqlite")), roster if roster.exists() else None,
+                        project_map if project_map.exists() else None, Path(env.get("ALLOC_JIRA_DIR", "out/jira")))
+    auth = auth_from_env()
+    require_protection(env.get("WEB_HOST", "0.0.0.0"), auth)
+    return create_app(settings, auth=auth)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -240,7 +315,9 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     settings = Settings(args.db, args.roster if args.roster.exists() else None,
                         args.project_map if args.project_map.exists() else None, args.jira_dir)
-    app = create_app(settings)
+    auth = auth_from_env()
+    require_protection(args.host, auth)
+    app = create_app(settings, auth=auth)
     print(f"База: {args.db}\nОткройте в браузере: http://{args.host}:{args.port}  (остановить: Ctrl+C)")
     app.run(host=args.host, port=args.port, debug=False)
     return 0

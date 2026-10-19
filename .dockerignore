@@ -1,0 +1,17 @@
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+# данные и результаты в образ не попадают, они монтируются томом
+data
+out
+config
+work
+*.xlsx
+*.xls
+*.sqlite
+.env
+screens
+README.md
+docs

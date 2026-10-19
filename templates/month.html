@@ -69,8 +69,13 @@ tfoot td.name{text-align:left;z-index:4}
   </div>
   <span class="chip {{ 'locked' if locked else 'draft' }}">{{ 'Месяц закрыт' if locked else 'Черновик' }}</span>
   <span class="grow"></span>
-  <label for="user" class="muted">Ваше имя</label>
-  <input id="user" placeholder="кто вносит правки" autocomplete="name" style="width:190px">
+  {% if known_user %}
+    <span class="muted">Вы вошли как <b style="color:var(--text)">{{ known_user }}</b></span>
+    <input id="user" type="hidden" value="{{ known_user }}">
+  {% else %}
+    <label for="user" class="muted">Ваше имя</label>
+    <input id="user" placeholder="кто вносит правки" autocomplete="name" style="width:190px">
+  {% endif %}
 </div>
 
 <div class="note">{{ jira.note }}</div>
@@ -210,8 +215,10 @@ tfoot td.name{text-align:left;z-index:4}
 <script>
 (function(){
   var userBox = document.getElementById('user');
-  try { userBox.value = localStorage.getItem('allocUser') || ''; } catch(e) {}
-  userBox.addEventListener('input', function(){ try { localStorage.setItem('allocUser', userBox.value); } catch(e) {} });
+  if (userBox.type !== 'hidden') {
+    try { userBox.value = localStorage.getItem('allocUser') || ''; } catch(e) {}
+    userBox.addEventListener('input', function(){ try { localStorage.setItem('allocUser', userBox.value); } catch(e) {} });
+  }
 
   var grid = document.getElementById('grid');
   var rows = grid ? Array.prototype.slice.call(grid.querySelectorAll('tbody tr')) : [];
